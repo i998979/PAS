@@ -38,7 +38,7 @@ public class PanelAdapter extends RecyclerView.Adapter<PanelAdapter.ViewHolder> 
     // TODO - panelLayout data will duplicate after OnBackPress and return
 
     @Override
-    public PanelAdapter.ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
+    public ViewHolder onCreateViewHolder(ViewGroup parent, int viewType) {
         View view = LayoutInflater.from(context).inflate(R.layout.panel, parent, false);
 
         ViewHolder holder = new ViewHolder(view);
