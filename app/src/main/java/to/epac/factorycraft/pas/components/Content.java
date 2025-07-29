@@ -1,93 +1,109 @@
-package to.epac.factorycraft.pas;
+package to.epac.factorycraft.pas.components;
 
-import androidx.annotation.Nullable;
-
+/**
+ * Content of the PA, including different segments of it
+ * Appro   03.1C #04	.
+ * Appro   03.1E #04	Train for LW cross boundary with departure platform info (Train not yet come): The approaching train for Lo Wu will depart from
+ * Appro   03.1P #04	.
+ */
 public class Content {
-    // >30<
+    // >03<
     private String id;
 
     // >1<
-    @Nullable
-    private String subid;
+    private String subId;
 
     // >C< >E< >P<
     private String lang;
 
     // Before semi-colon
-    // >Train for LMC cross boundary (Train not yet come)<
+    // >Train for LW cross boundary with departure platform info (Train not yet come)<
     private String title;
 
     // After semi-colon
-    // >The approaching train is going to Lok Ma Chau.<
-    @Nullable
+    // >The approaching train for Lo Wu will depart from<
     private String message;
 
-    // >#03<
-    @Nullable
+    // >#04<
     private String variable;
 
-    // true / false
-    private boolean isDisabled;
+    // >;<
+    private boolean disabled;
 
-    public Content() {
-        this("", "", "", "", "", "", false);
-    }
-    public Content(String id, String subid, String lang, String title, String message, String variable, boolean isDisabled) {
+    public Content(String id, String subId, String lang,
+                   String title, String message, String variable, boolean disabled) {
         this.id = id;
-        this.subid = subid;
+        this.subId = subId;
         this.lang = lang;
         this.title = title;
         this.message = message;
         this.variable = variable;
-        this.isDisabled = isDisabled;
+        this.disabled = disabled;
+    }
+
+    public Content(String id, String lang, String message, boolean disabled) {
+        this(id, "", lang, "", message, "", disabled);
     }
 
     public String getId() {
         return id;
     }
+
     public void setId(String id) {
         this.id = id;
     }
 
-    public String getSubid() {
-        return subid;
+
+    public String getSubId() {
+        return subId;
     }
-    public void setSubid(String subid) {
-        this.subid = subid;
+
+    public void setSubId(String subId) {
+        this.subId = subId;
     }
+
 
     public String getLang() {
         return lang;
     }
+
     public void setLang(String lang) {
         this.lang = lang;
     }
 
+
     public String getTitle() {
         return title;
     }
+
     public void setTitle(String title) {
         this.title = title;
     }
 
+
     public String getMessage() {
         return message;
     }
+
     public void setMessage(String message) {
         this.message = message;
     }
 
+
     public String getVariable() {
         return variable;
     }
+
     public void setVariable(String variable) {
         this.variable = variable;
     }
 
-    public boolean getDisabled() {
-        return isDisabled;
+
+    public boolean isDisabled() {
+        return disabled;
     }
+
     public void setDisabled(boolean disabled) {
-        isDisabled = disabled;
+        this.disabled = disabled;
     }
 }

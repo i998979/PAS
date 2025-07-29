@@ -1,385 +1,570 @@
 package to.epac.factorycraft.pas;
 
-import android.Manifest;
 import android.app.Activity;
-import android.content.DialogInterface;
-import android.content.pm.PackageManager;
-import android.os.Build;
+import android.content.Intent;
+import android.content.res.ColorStateList;
+import android.graphics.Color;
+import android.media.audiofx.LoudnessEnhancer;
+import android.net.Uri;
 import android.os.Bundle;
-import android.util.Log;
+import android.text.Editable;
+import android.text.TextWatcher;
 import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.ScrollView;
+import android.widget.GridLayout;
+import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
+import androidx.activity.EdgeToEdge;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.OptIn;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
-import androidx.recyclerview.widget.LinearLayoutManager;
-import androidx.recyclerview.widget.RecyclerView;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
+import androidx.documentfile.provider.DocumentFile;
+import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.ExoPlayer;
 
 import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
-import to.epac.factorycraft.pas.Handler.MessageListHandler;
-import to.epac.factorycraft.pas.Handler.SendHandler;
-import to.epac.factorycraft.pas.Handler.StopHandler;
-import to.epac.factorycraft.pas.Handler.VolumeController;
-
-import static to.epac.factorycraft.pas.Utils.getExtendedMemoryPath;
+import to.epac.factorycraft.pas.components.Category;
+import to.epac.factorycraft.pas.components.Component;
+import to.epac.factorycraft.pas.components.Content;
 
 public class MainActivity extends AppCompatActivity {
-    public static String selectedDb = "";
-
-    public static Activity activity;
-
     // Raw txt file's text
-    public static ArrayList<String> datas = new ArrayList<>();
+    public static ArrayList<String> data = new ArrayList<>();
     // All categories
     public static ArrayList<Category> categories = new ArrayList<>();
+    // All components
+    public static ArrayList<Component> components = new ArrayList<>();
+
+    public static String selectedDB = "";
+    public static String selectedFolder = "";
+    public static Map<String, DocumentFile> audios = new HashMap<>();
     public static int selectedCategory = 0;
+    public static String languageOrder = "CPE";
 
-    public static RecyclerView panel;
-    public static PanelAdapter panelAdapter;
+    public static ExoPlayer player;
+    public LoudnessEnhancer enhancer;
 
-    public static Spinner MessageList;
-    public static EditText Lang;
-    public static SeekBar Volume;
-    public static Button Send;
-    public static Button Stop;
 
+    public GridLayout buttonLayout;
+
+    public LinearLayout panel;
+
+    public Spinner messageList;
+    public EditText langOrder;
+    public SeekBar volume;
+    public Button send;
+    public Button stop;
+
+    @OptIn(markerClass = UnstableApi.class)
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        EdgeToEdge.enable(this);
         setContentView(R.layout.activity_main);
 
-        activity = this;
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main), (v, insets) -> {
+            Insets systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars());
+            v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom);
+            return insets;
+        });
 
-        MessageList = findViewById(R.id.MessageList);
-        Lang = findViewById(R.id.Lang);
-        Volume = findViewById(R.id.Volume);
-        Send = findViewById(R.id.Send);
-        Stop = findViewById(R.id.Stop);
+        player = new ExoPlayer.Builder(this).build();
+        player.addListener(new Player.Listener() {
+            @Override
+            public void onAudioSessionIdChanged(int audioSessionId) {
+                enhancer = new LoudnessEnhancer(audioSessionId);
+                enhancer.setEnabled(true);
+            }
+        });
+
+        buttonLayout = findViewById(R.id.buttonLayout);
+
+        messageList = findViewById(R.id.messageList);
+        langOrder = findViewById(R.id.langOrder);
+        volume = findViewById(R.id.volume);
+        send = findViewById(R.id.send);
+        stop = findViewById(R.id.stop);
+
         panel = findViewById(R.id.panel);
 
-        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, 1001);
-        }
+
+        ActivityResultLauncher<Intent> folderPicker = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(), result -> {
+                    if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
+                        Uri folderUri = result.getData().getData();
+                        if (folderUri != null) {
+                            getContentResolver().takePersistableUriPermission(
+                                    folderUri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+                            );
+
+                            selectedFolder = folderUri.toString();
+
+                            Toast.makeText(this, "Loading folder...", Toast.LENGTH_SHORT).show();
+
+                            CompletableFuture.runAsync(() -> {
+                                DocumentFile folderDoc = DocumentFile.fromTreeUri(this, folderUri);
+                                if (folderDoc != null && folderDoc.exists()) {
+                                    DocumentFile databaseTxt = null;
+
+                                    for (DocumentFile file : folderDoc.listFiles()) {
+                                        String name = file.getName().toLowerCase();
+
+                                        // Find first .txt file
+                                        if (databaseTxt == null && file.isFile() && name.endsWith(".txt"))
+                                            databaseTxt = file;
+                                        else
+                                            // It should be audio file, put it into cache
+                                            audios.put(name, file);
+                                    }
+
+                                    if (databaseTxt != null) {
+                                        selectedDB = databaseTxt.getUri().toString();
+
+                                        runOnUiThread(() -> {
+                                            loadData();
+                                            categorize();
+                                            applyCategoryToButton();
+                                            updateMessageList();
+
+                                            Toast.makeText(this, "Folder loaded successfully", Toast.LENGTH_SHORT).show();
+                                        });
+                                    } else {
+                                        runOnUiThread(() -> Toast.makeText(this, "No .txt file found in folder", Toast.LENGTH_SHORT).show());
+                                    }
+                                }
+                            });
+                        }
+                    }
+                }
+        );
 
 
+        new AlertDialog.Builder(this)
+                .setTitle("Select PAS folder with .txt and audios")
+                .setPositiveButton("Select", (dialog, which) -> {
+                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
+                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
+                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
+                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+                    folderPicker.launch(intent);
+                })
+                .show();
 
 
+        messageList.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                panel.removeAllViews();
 
-    }
+                // All Contents in the selected Category
+                ArrayList<Content> categoryContents = Utils.getCategoryContents(selectedCategory, false);
 
-    /*private String[] getAssetFiles(String path) {
-        ArrayList<String> items = new ArrayList<>();
-        AssetManager assetManager = getApplicationContext().getAssets();
-        try {
-            for (String file : assetManager.list(path)) {
-                if (file.endsWith(".txt"))
-                    items.add(file);
-            }
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
+                // Get which PA selected
+                String selectedId;
+                if (messageList.getSelectedItemPosition() < categoryContents.size())
+                    selectedId = categoryContents.get(messageList.getSelectedItemPosition()).getId();
+                else
+                    return;
 
-        String[] file = new String[items.size()];
-        for (int i = 0; i < items.size(); i++) {
-            file[i] = items.get(i);
-        }
+                ArrayList<Content> selectedPAcontentList = Utils.getSelectedPaContents(selectedCategory, selectedId, false);
 
-        return file;
-    }*/
+                for (Content content : selectedPAcontentList) {
+                    String fullId = content.getId();
+                    if (!content.getSubId().isEmpty()) fullId += "." + content.getSubId();
 
-    private String[] getFiles(String path) {
-        String path0 = getExtendedMemoryPath(this);
-        File dir = new File(path0 + "/" + path);
-        File[] directoryListing = dir.listFiles();
+                    /* ##### TextView ##### */
+                    TextView tv = new TextView(MainActivity.this);
 
-        ArrayList<String> items = new ArrayList<>();
-        if (directoryListing != null) {
-            for (File child : directoryListing) {
-                if (child.getName().endsWith(".txt"))
-                    items.add(child.getName());
-            }
-        }
-        String[] file = new String[items.size()];
-        for (int i = 0; i < items.size(); i++) {
-            file[i] = items.get(i);
-        }
-        return file;
-    }
+                    if (content.getMessage().isEmpty())
+                        tv.setText(content.getTitle());
+                    else
+                        tv.setText(content.getMessage());
 
-    private void loadFile(String file) {
+                    components.add(new Component(fullId, tv));
+                    panel.addView(tv);
 
-        BufferedReader reader = null;
-        String path0 = getExtendedMemoryPath(this);
-        File file0 = new File(path0 + "/" + file);
-        try {
-            //reader = new BufferedReader(new InputStreamReader(getAssets().open(file), "UTF-8"));
-            reader = new BufferedReader(new FileReader(file0));
+                    /* ##### Spinner ##### */
+                    Spinner varSpinner = new Spinner(MainActivity.this);
 
-            String line;
-            while ((line = reader.readLine()) != null) {
-                line = line.replaceAll("\t", "    ");
-                datas.add(line);
-            }
+                    // If the content has variable to load
+                    if (!content.getVariable().isEmpty()) {
+                        String varType = content.getVariable();
 
-        } catch (IOException e) {
-            e.printStackTrace();
-        } finally {
-            if (reader != null) {
-                try {
-                    reader.close();
-                } catch (IOException e) {
-                    e.printStackTrace();
+                        ArrayList<Content> varList = Utils.getCategoryContents(varType, false);
+
+                        ArrayList<String> msgPreviewList = new ArrayList<>();
+                        for (Content item : varList) {
+                            msgPreviewList.add(item.getId() + " " + item.getMessage());
+                        }
+
+                        ArrayAdapter<String> adapter = new ArrayAdapter<>(MainActivity.this, android.R.layout.simple_spinner_dropdown_item, msgPreviewList);
+                        varSpinner.setAdapter(adapter);
+
+                        components.add(new Component(fullId, varSpinner));
+                        panel.addView(varSpinner);
+
+                    }
                 }
             }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+            }
+        });
+
+        langOrder.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                languageOrder = s.toString();
+            }
+        });
+
+        volume.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
+            @Override
+            public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+                enhancer.setTargetGain(progress * 1000);
+            }
+
+            @Override
+            public void onStartTrackingTouch(SeekBar seekBar) {
+            }
+
+            @Override
+            public void onStopTrackingTouch(SeekBar seekBar) {
+            }
+        });
+
+        send.setOnClickListener(v -> {
+            ArrayList<SoundPath> paths = new ArrayList<>();
+
+            // All Contents in the selected Category
+            ArrayList<Content> categoryContents = Utils.getCategoryContents(selectedCategory, false);
+
+            // Get which PA selected
+            String selectedMessageId;
+            if (messageList.getSelectedItemPosition() < categoryContents.size())
+                selectedMessageId = categoryContents.get(messageList.getSelectedItemPosition()).getId();
+            else
+                return;
+
+
+            // Get selected PA's all Contents
+            // **** THIS TIME WE NEED ALL LANGUAGE **** //
+            ArrayList<Content> selectedPAcontentList = Utils.getSelectedPaContents(selectedCategory, selectedMessageId, true);
+
+            String categoryName = categories.get(selectedCategory).getName();
+
+            for (Content content : selectedPAcontentList) {
+                String fullId = content.getId() + content.getSubId();
+
+                String lang = content.getLang();
+
+                paths.add(new SoundPath(content.getLang(), categoryName.split("(?<=\\G.{3})")[0].toUpperCase() + fullId + lang + ".mp3"));
+
+                if (!content.getVariable().isEmpty()) {
+                    String varType = content.getVariable();
+                    String title = content.getTitle();
+
+                    if (title.startsWith(">")) {
+                        int warpTo = Character.getNumericValue(title.charAt(1));
+
+                        for (Component component : components) {
+                            if (component.getId().equals(content.getId() + "." + warpTo) && component.getComponent() instanceof Spinner) {
+
+                                Spinner spinner = (Spinner) component.getComponent();
+                                int selected = spinner.getSelectedItemPosition();
+
+                                ArrayList<Content> variableList = Utils.getCategoryContents(varType, false);
+
+                                Content selectedVar = variableList.get(selected);
+
+                                String id = selectedVar.getId();
+                                if (!selectedVar.getSubId().isEmpty())
+                                    id += selectedVar.getSubId();
+
+                                paths.add(new SoundPath(content.getLang(), varType.split("(?<=\\G.{3})")[0].toUpperCase() + id + lang + ".mp3"));
+                                break;
+                            }
+                        }
+                    } else {
+                        for (Component component : components) {
+                            String compId = component.getId().replace(".", "");
+
+                            if (compId.equals(fullId) && component.getComponent() instanceof Spinner) {
+
+                                Spinner spinner = (Spinner) component.getComponent();
+                                int selected = spinner.getSelectedItemPosition();
+
+                                ArrayList<Content> VariableList = Utils.getCategoryContents(varType, false);
+
+                                Content selectedVar = VariableList.get(selected);
+
+                                String id = selectedVar.getId();
+                                if (selectedVar.getSubId().isEmpty())
+                                    id += selectedVar.getSubId();
+
+                                paths.add(new SoundPath(content.getLang(), varType.split("(?<=\\G.{3})")[0].toUpperCase() + id + lang + ".mp3"));
+
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+
+
+            ArrayList<SoundPath> sortedPath = new ArrayList<>();
+            for (char lang : languageOrder.toCharArray()) {
+                for (SoundPath soundPath : paths) {
+                    if (soundPath.getLang().charAt(0) == lang) {
+                        sortedPath.add(soundPath);
+                    }
+                }
+            }
+
+
+            PaPlayer.play(v.getContext(), sortedPath);
+        });
+
+        stop.setOnClickListener(v -> PaPlayer.stop());
+    }
+
+    private void loadData() {
+        try {
+            Uri fileUri = Uri.parse(selectedDB);
+            InputStream inputStream = getContentResolver().openInputStream(fileUri);
+            if (inputStream == null) {
+                Toast.makeText(this, "Unable to open file", Toast.LENGTH_SHORT).show();
+                return;
+            }
+
+            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
+            String line;
+
+            while ((line = reader.readLine()) != null) {
+                data.add(line);
+            }
+
+            reader.close();
+            inputStream.close();
+
+            Toast.makeText(this, "File read into lines: " + data.size(), Toast.LENGTH_SHORT).show();
+
+        } catch (Exception e) {
+            e.printStackTrace();
+            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
         }
     }
 
-    private void classify() {
-        for (int i = 0; i < datas.size(); i++) {
-            String line = datas.get(i);
-            if (line == null) break;
+    private void categorize() {
+        for (String line : data) {
+            if (line.isEmpty()) continue;
 
+            // Normalize spacing: convert any sequence of spaces or tabs into a single tab
+            line = line.trim().replaceAll("\t", " ");
+
+            // Category
             // >01	Safety<
             if (Utils.isInteger(line.substring(0, line.indexOf(" ")))) {
-                Category category = new Category();
                 // >01<
                 String id = line.substring(0, line.indexOf(" "));
                 // >Safety<
-                String name = line.substring(line.indexOf(" ") + 4);
-                category.setId(id);
-                category.setName(name);
+                String name = line.substring(line.indexOf(" ") + 1).trim();
 
-                categories.add(category);
+                categories.add(new Category(id, name));
+                continue;
             }
 
+
+            // Variables, category may not be declared on its first run
             // >;#02     21E	KCR East Rail Extension<
             // >#02     22E	Ma On Shan Line<
-            else if (line.startsWith("#") && Utils.isInteger(line.substring(1, line.indexOf(" "))) ||
-                    (line.substring(0, 1).equals(";") &&
-                            line.substring(1, 2).equals("#") &&
-                            Utils.isInteger(line.substring(2, line.indexOf(" "))))) {
-
+            if ((line.startsWith("#") && Utils.isInteger(line.substring(1, line.indexOf(" ")))) ||
+                    (line.startsWith(";#") && Utils.isInteger(line.substring(2, line.indexOf(" "))))) {
                 // >;#02     21E	KCR East Rail Extension<
-                boolean isDisabled = false;
-                if (line.startsWith(";")) isDisabled = true;
+                boolean disabled = line.startsWith(";");
 
-                // Line itself but removed ";"
                 // >#02     21E	KCR East Rail Extension<
-                String theline = line.replaceFirst(";", "");
+                String varCatLine = line.replaceFirst(";", "");
+                // >#02<
+                String varCat = varCatLine.substring(0, varCatLine.indexOf(" "));
 
-                // #02
-                String prefix = theline.substring(0, theline.indexOf(" "));
 
-                // >     21E	KCR East Rail Extension<
-                theline = theline.substring(prefix.length());
+                // >     21E KCR East Rail Extension<
                 // >21E	KCR East Rail Extension<
-                theline = theline.replaceFirst("\\s*", "");
+                varCatLine = varCatLine.substring(varCat.length()).trim();
+
 
                 // >21E<
-                String fullCode = theline.substring(0, theline.indexOf(" "));
+                String varCode = varCatLine.substring(0, varCatLine.indexOf(" "));
                 // >21<
-                String id = fullCode.substring(0, fullCode.length() - 1);
+                String varId = varCode.substring(0, varCode.length() - 1);
                 // >E<
-                String lang = fullCode.substring(id.length(), id.length() + 1);
+                String varLang = varCode.substring(varId.length(), varId.length() + 1);
 
-                // >    KCR East Rail Extension<
-                String message = theline.substring(fullCode.length());
                 // >KCR East Rail Extension<
-                message = message.replaceFirst("\\s*", "");
+                String varMsg = varCatLine.substring(varCode.length()).trim();
 
-                Content content = new Content();
-                content.setId(id);
-                content.setLang(lang);
-                content.setMessage(message);
+
+                Content content = new Content(varId, varLang, varMsg, disabled);
 
                 // Create a new Category if it is a new one
-                boolean isNewCategory = true;
-
-                for (Category category : categories) {
-                    if (category.getId().equals(prefix)) {
-                        isNewCategory = false;
-                        // If it belongs to an exist category, just simply add it here
-                        category.addContent(content);
-                    }
-                }
-                if (isNewCategory) {
-                    Category category = new Category();
-                    category.setId(prefix);
-                    category.setName(prefix);
+                Category category = categories.stream()
+                        .filter(cat -> cat.getId().equals(varCat)).findFirst().orElse(null);
+                if (category == null) {
+                    // ID: #01        Name: #01
+                    category = new Category(varCat, varCat);
                     categories.add(category);
-                    // If it belongs to a new category,  create a category first, then add it into the category
-                    category.addContent(content);
                 }
+
+                category.getContents().add(content);
             }
+
+            // PA lines, category should be declared already
+            // Appro   03.1C #04	.
+            // Appro   03.1E #04	Train for LW cross boundary with departure platform info (Train not yet come): The approaching train for Lo Wu will depart from
+            // Appro   03.1P #04	.
             else {
-                boolean isDisabled = false;
-                if (line.startsWith(";")) isDisabled = true;
+                boolean disabled = line.startsWith(";");
 
                 // The line itself without ";"
                 // >Appro   03.1E #04	Train for LW cross boundary with departure platform info (Train not yet come): The approaching train for Lo Wu will depart from<
-                String theline = line.replaceFirst(";", "");
+                String contentLine = line.replaceFirst(";", "");
 
+                // >Appro   <
                 // >Appro<
-                String cat = theline.substring(0, 8);
-                cat = cat.replaceAll("\\s*", "");
+                String cat = contentLine.substring(0, 8).trim();
 
-                // >   03.1E #04	Train for LW cross boundary with departure platform info (Train not yet come): The approaching train for Lo Wu will depart from<
-                //theline = theline.substring(cat.length());
-                theline = theline.substring(8);
-                // >03.1E #04	Train for LW cross boundary with departure platform info (Train not yet come): The approaching train for Lo Wu will depart from<
-                theline = theline.replaceFirst("\\s*", "");
+
+                // >   03.1E #04	Train for ...<
+                // >03.1E #04	Train for ...<
+                contentLine = contentLine.substring(cat.length()).trim();
+
 
                 // >03.1E<
-                String fullCode = theline.substring(0, theline.indexOf(" "));
+                String fullCode = contentLine;
+                if (contentLine.contains(" "))
+                    fullCode = contentLine.substring(0, contentLine.indexOf(" "));
                 // >03.1<
-                String fullid = fullCode.substring(0, fullCode.length() - 1);
+                String fullId = fullCode.substring(0, fullCode.length() - 1);
 
-                String id = fullid;
-                String subid = "";
-                if (fullid.contains(".")) {
+                String id = fullId;
+                String subId = "";
+                String lang = fullCode.substring(id.length());
+                if (fullId.contains(".")) {
                     // >03<
-                    id = fullid.substring(0, fullid.indexOf("."));
+                    id = fullId.substring(0, fullId.indexOf("."));
                     // >1<
-                    subid = fullid.substring(fullid.indexOf(".") + 1);
+                    subId = fullId.substring(id.length() + 1);
+                    // >03.1E<
+                    // >E<
+                    lang = fullCode.substring(id.length() + 1 + subId.length());
                 }
-                // >E<
-                String lang = fullCode.substring(fullid.length(), fullid.length() + 1);
 
-                // > #04	Train for LW cross boundary with departure platform info (Train not yet come): The approaching train for Lo Wu will depart from<
-                theline = theline.substring(fullCode.length());
-                // >#04	Train for LW cross boundary with departure platform info (Train not yet come): The approaching train for Lo Wu will depart from<
-                theline = theline.replaceFirst("\\s*", "");
+                // > #04	Train for ...<      >	Train for LW cross boundary (Train not yet come): Your attention please. The approaching train is going to Lo Wu.<
+                // >#04	Train for ...<          >Train for LW cross boundary (Train not yet come): Your attention please. The approaching train is going to Lo Wu.<
+                contentLine = contentLine.substring(fullCode.length()).trim();
 
+
+                // (Optional)
                 String variable = "";
-                if (theline.startsWith("#")) {
+                if (contentLine.startsWith("#")) {
                     // >#04<
-                    variable = theline.substring(0, theline.indexOf(" "));
-                    theline = theline.substring(variable.length());
+                    variable = contentLine.substring(0, contentLine.indexOf(" "));
+
+                    // >	Train for ...<
+                    // >Train for ...<
+                    contentLine = contentLine.substring(variable.length()).trim();
                 }
 
-                String fullMsg = theline.replaceFirst("\\s*", "");
 
-                String title = "";
+                String title;
                 String message = "";
-                if (fullMsg.contains(":")) {
-                    title = fullMsg.substring(0, fullMsg.indexOf(":"));
-                    try {
-                        message = fullMsg.substring(fullMsg.indexOf(":") + 2);
-                    } catch (StringIndexOutOfBoundsException e) {
-                        e.printStackTrace();
-                    }
-                }
-                else {
-                    title = fullMsg;
+
+                // >Train for LW cross boundary (Train not yet come): Your attention please. The approaching train is going to Lo Wu.<
+                if (contentLine.contains(":")) {
+                    // Train for LW cross boundary (Train not yet come)<
+                    title = contentLine.substring(0, contentLine.indexOf(":"));
+                    // >Your attention please. The approaching train is going to Lo Wu.<
+                    message = contentLine.substring(title.length() + 1).trim();
+                } else {
+                    title = contentLine;
                 }
 
-                Content content = new Content();
-                content.setDisabled(isDisabled);
-                content.setId(id);
-                content.setSubid(subid);
-                content.setLang(lang);
-                content.setTitle(title);
-                content.setMessage(message);
-                content.setVariable(variable);
-
+                Content content = new Content(id, subId, lang, title, message, variable, disabled);
                 for (Category category : categories) {
                     if (category.getName().equals(cat))
-                        category.addContent(content);
+                        category.getContents().add(content);
                 }
             }
         }
     }
 
-    private void showItems() {
-        ScrollView debug = findViewById(R.id.debug);
-        debug.setVisibility(View.VISIBLE);
+    private void applyCategoryToButton() {
+        for (int i = 0; i < 14; i++) {
+            Button button = new Button(this);
+            button.setId(i);
+            button.setAllCaps(false);
+            button.setTextColor(Color.parseColor("#000000"));
+            button.setBackgroundTintList(ColorStateList.valueOf(Color.parseColor("#c0c0c0")));
 
-        TextView tv = findViewById(R.id.tv);
-        String msg = "";
+            if (i < categories.size() && !categories.get(i).getName().startsWith("#")) {
+                String name = categories.get(i).getName();
+                button.setText(name);
+                button.setEnabled(true);
 
-        for (Category category : categories) {
-            msg = msg + "Category Id: " + category.getId() + "    Name: " + category.getName() + "\n";
-
-            for (Content content : category.getContents()) {
-                if (content.getDisabled()) msg += ";";
-
-                msg += "    Id: " + content.getId() + ":" + content.getSubid() + ":" + content.getLang() + "\n";
-                msg += "    Title: " + content.getTitle() + "\n";
-                msg += "    Msg: " + content.getMessage() + "\n";
-                msg += "    Var: " + content.getVariable() + "\n\n";
+                button.setOnClickListener(v -> {
+                    selectedCategory = v.getId();
+                    updateMessageList();
+                });
+            } else {
+                button.setText("");
+                button.setEnabled(false);
             }
-            msg += "\n----------End of Category----------\n\n";
+
+            buttonLayout.addView(button);
         }
-        tv.setText(msg);
-        Log.d("tagg", msg);
-    }
-    private void showItems2() {
-        ScrollView debug = findViewById(R.id.debug);
-        debug.setVisibility(View.VISIBLE);
-
-        TextView tv = findViewById(R.id.tv);
-        String msg = "";
-
-        for (Category category : categories) {
-            if (category.getId().contains("#")) {
-                msg = msg + "Category Id: " + category.getId() + "    Name: " + category.getName() + "\n";
-
-                for (Content content : category.getContents()) {
-                    if (content.getDisabled()) msg += ";";
-
-                    msg += "    Id: " + content.getId() + ":" + content.getSubid() + ":" + content.getLang() + "\n";
-                    msg += "    Title: " + content.getTitle() + "\n";
-                    msg += "    Msg: " + content.getMessage() + "\n";
-                    msg += "    Var: " + content.getVariable() + "\n\n";
-                }
-                msg += "\n----------End of Category----------\n\n";
-            }
-        }
-        tv.setText(msg);
-        Log.d("tagg", msg);
     }
 
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
-        if (requestCode == 1001) {
-            if (grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                AlertDialog.Builder builder = new AlertDialog.Builder(this);
-                builder.setTitle("Select a PAS database")
-                        .setItems(getFiles("PAS"), new DialogInterface.OnClickListener() {
-                            public void onClick(DialogInterface dialog, int which) {
+    private void updateMessageList() {
+        panel.removeAllViews();
 
-                                MessageList.setOnItemSelectedListener(new MessageListHandler());
-                                Volume.setOnSeekBarChangeListener(new VolumeController());
-                                Send.setOnClickListener(new SendHandler());
-                                Stop.setOnClickListener(new StopHandler());
-                                panelAdapter = new PanelAdapter(getApplicationContext());
-                                panel.setLayoutManager(new LinearLayoutManager(getApplicationContext())); panel.setAdapter(panelAdapter);
+        ArrayList<String> spinnerList = new ArrayList<>();
 
-                                selectedDb = getFiles("PAS")[which];
-                                //selectedDb = getAssetFiles("")[which];
-                                loadFile("PAS/" + getFiles("PAS")[which]);
-                                //loadFile(getAssetFiles("")[which]);
-                                classify();
-                                //showItems();
-                                //showItems2();
-
-                                CategoryLoader.applyCategoryToButton(activity);
-                                CategoryLoader.updateMessageList(activity);
-
-                            }
-                        });
-                builder.show();
-            }
+        for (Content content : Utils.getCategoryContents(selectedCategory, false)) {
+            spinnerList.add(categories.get(selectedCategory).getName() + " " + content.getId() + " " + content.getTitle());
         }
+
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, spinnerList);
+        messageList.setAdapter(adapter);
     }
 }

@@ -12,13 +12,16 @@ public class SoundPath {
     public String getLang() {
         return lang;
     }
+
     public void setLang(String lang) {
         this.lang = lang;
     }
 
+
     public String getPath() {
         return path;
     }
+
     public void setPath(String path) {
         this.path = path;
     }

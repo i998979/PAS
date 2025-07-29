@@ -1,9 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@color/colorBackground">
+    android:background="@color/colorBackground"
+    android:baselineAligned="false">
 
     <LinearLayout
         android:layout_width="wrap_content"
@@ -29,7 +31,7 @@
     </LinearLayout>
 
     <LinearLayout
-        android:layout_width="match_parent"
+        android:layout_width="0dp"
         android:layout_height="match_parent"
         android:layout_weight="10"
         android:orientation="vertical">
@@ -42,8 +44,8 @@
             android:orientation="horizontal">
 
             <Spinner
-                android:id="@+id/MessageList"
-                android:layout_width="wrap_content"
+                android:id="@+id/messageList"
+                android:layout_width="0dp"
                 android:layout_height="match_parent"
                 android:layout_weight="1"
                 android:background="#ffffff"
@@ -58,40 +60,31 @@
                 android:textStyle="bold" />
 
             <EditText
-                android:id="@+id/Lang"
+                android:id="@+id/langOrder"
                 android:layout_width="wrap_content"
                 android:layout_height="match_parent"
+                android:autofillHints="CPE"
                 android:background="#ffffff"
                 android:digits="CPE"
+                android:inputType="text"
                 android:maxLength="3"
                 android:minEms="3"
                 android:text="CPE" />
-
         </LinearLayout>
 
         <ScrollView
-            android:id="@+id/debug"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:visibility="gone">
+            android:background="#ffffff">
 
             <LinearLayout
+                android:id="@+id/panel"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:orientation="vertical">
-
-                <TextView
-                    android:id="@+id/tv"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent" />
-            </LinearLayout>
+                android:layout_height="wrap_content"
+                android:background="#ffffff"
+                android:orientation="vertical"
+                android:padding="8dp" />
         </ScrollView>
-
-        <androidx.recyclerview.widget.RecyclerView
-            android:id="@+id/panel"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:background="#ffffff" />
 
     </LinearLayout>
 
@@ -109,7 +102,7 @@
             android:textStyle="bold" />
 
         <SeekBar
-            android:id="@+id/Volume"
+            android:id="@+id/volume"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:max="32"
@@ -123,7 +116,7 @@
             android:orientation="vertical">
 
             <Button
-                android:id="@+id/Sequ"
+                android:id="@+id/sequ"
                 style="@style/Widget.AppCompat.Button.Small"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -134,7 +127,7 @@
                 app:backgroundTint="#c0c0c0" />
 
             <Button
-                android:id="@+id/Shed"
+                android:id="@+id/sched"
                 style="@style/Widget.AppCompat.Button.Small"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -145,7 +138,7 @@
                 app:backgroundTint="#c0c0c0" />
 
             <Button
-                android:id="@+id/Prelisten"
+                android:id="@+id/prelisten"
                 style="@style/Widget.AppCompat.Button.Small"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -162,7 +155,7 @@
                 android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/Send"
+                    android:id="@+id/send"
                     style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -173,7 +166,7 @@
                     app:backgroundTint="#c0c0c0" />
 
                 <Button
-                    android:id="@+id/Stop"
+                    android:id="@+id/stop"
                     style="@style/Widget.AppCompat.Button.Small"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
@@ -185,7 +178,7 @@
             </LinearLayout>
 
             <Button
-                android:id="@+id/Repeat"
+                android:id="@+id/repeat"
                 style="@style/Widget.AppCompat.Button.Small"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
