@@ -4,12 +4,12 @@ plugins {
 
 android {
     namespace 'to.epac.factorycraft.pas'
-    compileSdk 35
+    compileSdk 37
 
     defaultConfig {
         applicationId "to.epac.factorycraft.pas"
         minSdk 34
-        targetSdk 35
+        targetSdk 37
         versionCode 1
         versionName "1.0"
 
