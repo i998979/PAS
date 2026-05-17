@@ -1,14 +1,12 @@
 package to.epac.factorycraft.pas;
 
-import android.app.Activity;
-import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.media.audiofx.LoudnessEnhancer;
-import android.net.Uri;
 import android.os.Bundle;
 import android.text.Editable;
 import android.text.TextWatcher;
+import android.util.Log;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
@@ -22,32 +20,39 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
 import androidx.annotation.OptIn;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
-import androidx.documentfile.provider.DocumentFile;
 import androidx.media3.common.Player;
 import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
 
+import com.dropbox.core.DbxRequestConfig;
+import com.dropbox.core.v2.DbxClientV2;
+import com.dropbox.core.v2.files.FileMetadata;
+import com.dropbox.core.v2.files.FolderMetadata;
+import com.dropbox.core.v2.files.ListFolderResult;
+import com.dropbox.core.v2.files.Metadata;
+
 import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.Map;
-import java.util.concurrent.CompletableFuture;
+import java.util.LinkedList;
+import java.util.Queue;
 
 import to.epac.factorycraft.pas.components.Category;
 import to.epac.factorycraft.pas.components.Component;
 import to.epac.factorycraft.pas.components.Content;
 
 public class MainActivity extends AppCompatActivity {
+    public static DbxClientV2 dbxClient;
+
     // Raw txt file's text
     public static ArrayList<String> data = new ArrayList<>();
     // All categories
@@ -55,9 +60,8 @@ public class MainActivity extends AppCompatActivity {
     // All components
     public static ArrayList<Component> components = new ArrayList<>();
 
-    public static String selectedDB = "";
-    public static String selectedFolder = "";
-    public static Map<String, DocumentFile> audios = new HashMap<>();
+    public static String selectedDbxFolder = "";
+
     public static int selectedCategory = 0;
     public static String languageOrder = "CPE";
 
@@ -107,67 +111,85 @@ public class MainActivity extends AppCompatActivity {
 
         panel = findViewById(R.id.panel);
 
+        new AlertDialog.Builder(this)
+                .setTitle("Connect to Dropbox")
+                .setMessage("Fetch .txt files from Dropbox recursively?")
+                .setPositiveButton("Connect", (dialog, which) -> {
+                    Toast.makeText(this, "Scanning Dropbox folders...", Toast.LENGTH_SHORT).show();
+                    new Thread(() -> {
+                        try {
+                            DbxRequestConfig config = DbxRequestConfig.newBuilder("dropbox/pas").build();
+                            dbxClient = new DbxClientV2(config, BuildConfig.DROPBOX_ACCESS_TOKEN);
 
-        ActivityResultLauncher<Intent> folderPicker = registerForActivityResult(
-                new ActivityResultContracts.StartActivityForResult(), result -> {
-                    if (result.getResultCode() == Activity.RESULT_OK && result.getData() != null) {
-                        Uri folderUri = result.getData().getData();
-                        if (folderUri != null) {
-                            getContentResolver().takePersistableUriPermission(
-                                    folderUri,
-                                    Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-                            );
+                            ArrayList<String> txtFiles = new ArrayList<>();
 
-                            selectedFolder = folderUri.toString();
+                            Queue<String> folderQueue = new LinkedList<>();
+                            folderQueue.add("");
 
-                            Toast.makeText(this, "Loading folder...", Toast.LENGTH_SHORT).show();
+                            while (!folderQueue.isEmpty()) {
+                                String currentFolder = folderQueue.poll();
+                                ListFolderResult result = dbxClient.files().listFolder(currentFolder);
 
-                            CompletableFuture.runAsync(() -> {
-                                DocumentFile folderDoc = DocumentFile.fromTreeUri(this, folderUri);
-                                if (folderDoc != null && folderDoc.exists()) {
-                                    DocumentFile databaseTxt = null;
-
-                                    for (DocumentFile file : folderDoc.listFiles()) {
-                                        String name = file.getName().toLowerCase();
-
-                                        // Find first .txt file
-                                        if (databaseTxt == null && file.isFile() && name.endsWith(".txt"))
-                                            databaseTxt = file;
-                                        else
-                                            // It should be audio file, put it into cache
-                                            audios.put(name, file);
-                                    }
-
-                                    if (databaseTxt != null) {
-                                        selectedDB = databaseTxt.getUri().toString();
-
-                                        runOnUiThread(() -> {
-                                            loadData();
-                                            categorize();
-                                            applyCategoryToButton();
-                                            updateMessageList();
-
-                                            Toast.makeText(this, "Folder loaded successfully", Toast.LENGTH_SHORT).show();
-                                        });
-                                    } else {
-                                        runOnUiThread(() -> Toast.makeText(this, "No .txt file found in folder", Toast.LENGTH_SHORT).show());
+                                for (Metadata metadata : result.getEntries()) {
+                                    if (metadata instanceof FolderMetadata) {
+                                        folderQueue.add(metadata.getPathLower());
+                                    } else if (metadata instanceof FileMetadata) {
+                                        if (metadata.getName().toLowerCase().endsWith(".txt")) {
+                                            txtFiles.add(metadata.getPathDisplay());
+                                        }
                                     }
                                 }
+                            }
+
+                            runOnUiThread(() -> {
+                                if (txtFiles.isEmpty()) {
+                                    Toast.makeText(this, "No .txt file found in any folder", Toast.LENGTH_SHORT).show();
+                                    return;
+                                }
+
+                                String[] items = txtFiles.toArray(new String[0]);
+                                new AlertDialog.Builder(MainActivity.this)
+                                        .setTitle("Select Database (.txt)")
+                                        .setItems(items, (d, w) -> {
+                                            String selectedPath = items[w];
+
+                                            int lastSlash = selectedPath.lastIndexOf("/");
+                                            selectedDbxFolder = lastSlash > 0 ? selectedPath.substring(0, lastSlash) : "";
+
+                                            new Thread(() -> {
+                                                try {
+                                                    InputStream in = dbxClient.files().download(selectedPath).getInputStream();
+                                                    BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+                                                    String line;
+                                                    data.clear();
+                                                    categories.clear();
+                                                    components.clear();
+
+                                                    while ((line = reader.readLine()) != null) {
+                                                        data.add(line);
+                                                    }
+                                                    reader.close();
+                                                    in.close();
+
+                                                    runOnUiThread(() -> {
+                                                        categorize();
+                                                        applyCategoryToButton();
+                                                        updateMessageList();
+                                                        Toast.makeText(MainActivity.this, "Database Loaded from: " + selectedPath, Toast.LENGTH_LONG).show();
+                                                    });
+                                                } catch (Exception e) {
+                                                    e.printStackTrace();
+                                                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "Error reading file", Toast.LENGTH_SHORT).show());
+                                                }
+                                            }).start();
+                                        })
+                                        .show();
                             });
+                        } catch (Exception e) {
+                            e.printStackTrace();
+                            runOnUiThread(() -> Toast.makeText(this, "Dropbox scan failed", Toast.LENGTH_SHORT).show());
                         }
-                    }
-                }
-        );
-
-
-        new AlertDialog.Builder(this)
-                .setTitle("Select PAS folder with .txt and audios")
-                .setPositiveButton("Select", (dialog, which) -> {
-                    Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT_TREE);
-                    intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION |
-                            Intent.FLAG_GRANT_WRITE_URI_PERMISSION |
-                            Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-                    folderPicker.launch(intent);
+                    }).start();
                 })
                 .show();
 
@@ -351,38 +373,75 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
 
+            if (dbxClient == null) return;
+            Toast.makeText(MainActivity.this, "Downloading tracks...", Toast.LENGTH_SHORT).show();
+            send.setEnabled(false);
 
-            PaPlayer.play(v.getContext(), sortedPath);
+            new Thread(() -> {
+                ArrayList<String> localCachePaths = new ArrayList<>();
+                try {
+                    String folderPath = selectedDbxFolder;
+                    if (folderPath.equals("/")) {
+                        folderPath = "";
+                    }
+
+                    ListFolderResult folderResult = dbxClient.files().listFolder(folderPath);
+                    ArrayList<Metadata> cloudFiles = new ArrayList<>(folderResult.getEntries());
+
+                    for (SoundPath soundPath : sortedPath) {
+                        String targetFileName = soundPath.getPath();
+
+                        String targetBaseName = targetFileName;
+                        if (targetFileName.contains(".")) {
+                            targetBaseName = targetFileName.substring(0, targetFileName.lastIndexOf("."));
+                        }
+
+                        String actualDbxPath = null;
+                        String actualCloudFileName = null;
+
+                        for (Metadata metadata : cloudFiles) {
+                            String cloudName = metadata.getName();
+                            String cloudBaseName = cloudName;
+                            if (cloudName.contains(".")) {
+                                cloudBaseName = cloudName.substring(0, cloudName.lastIndexOf("."));
+                            }
+
+                            if (cloudBaseName.equalsIgnoreCase(targetBaseName)) {
+                                actualDbxPath = metadata.getPathLower();
+                                actualCloudFileName = cloudName;
+                                break;
+                            }
+                        }
+
+                        // 3. 下載到內部快取
+                        if (actualDbxPath != null) {
+                            File cacheFile = new File(getCacheDir(), actualCloudFileName);
+                            try (FileOutputStream out = new FileOutputStream(cacheFile)) {
+                                dbxClient.files().download(actualDbxPath).download(out);
+                                localCachePaths.add(cacheFile.getAbsolutePath());
+                            } catch (Exception e) {
+                                e.printStackTrace();
+                            }
+                        } else {
+                            Log.e("PAS_DEBUG", "音檔未包含在該目錄下: " + targetBaseName);
+                        }
+                    }
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+
+                runOnUiThread(() -> {
+                    send.setEnabled(true);
+                    if (!localCachePaths.isEmpty()) {
+                        PaPlayer.play(localCachePaths);
+                    } else {
+                        Toast.makeText(MainActivity.this, "No playable tracks downloaded.", Toast.LENGTH_SHORT).show();
+                    }
+                });
+            }).start();
         });
 
         stop.setOnClickListener(v -> PaPlayer.stop());
-    }
-
-    private void loadData() {
-        try {
-            Uri fileUri = Uri.parse(selectedDB);
-            InputStream inputStream = getContentResolver().openInputStream(fileUri);
-            if (inputStream == null) {
-                Toast.makeText(this, "Unable to open file", Toast.LENGTH_SHORT).show();
-                return;
-            }
-
-            BufferedReader reader = new BufferedReader(new InputStreamReader(inputStream));
-            String line;
-
-            while ((line = reader.readLine()) != null) {
-                data.add(line);
-            }
-
-            reader.close();
-            inputStream.close();
-
-            Toast.makeText(this, "File read into lines: " + data.size(), Toast.LENGTH_SHORT).show();
-
-        } catch (Exception e) {
-            e.printStackTrace();
-            Toast.makeText(this, "Error: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-        }
     }
 
     private void categorize() {

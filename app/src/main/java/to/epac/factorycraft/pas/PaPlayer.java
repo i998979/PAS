@@ -1,58 +1,51 @@
 package to.epac.factorycraft.pas;
 
-import static to.epac.factorycraft.pas.MainActivity.audios;
 import static to.epac.factorycraft.pas.MainActivity.player;
 
-import android.content.Context;
 import android.net.Uri;
 
-import androidx.documentfile.provider.DocumentFile;
 import androidx.media3.common.MediaItem;
+import androidx.media3.common.Player;
 
+import java.io.File;
 import java.util.ArrayList;
-import java.util.List;
 
 public class PaPlayer {
 
-    public static void play(Context context, ArrayList<SoundPath> paths) {
-        if (paths == null || paths.isEmpty()) return;
+    private static Player.Listener cleanupListener;
 
-        Uri folderUri = Uri.parse(MainActivity.selectedFolder);
+    public static void play(ArrayList<String> localPaths) {
+        if (localPaths == null || localPaths.isEmpty()) return;
 
-        // Access the folder
-        DocumentFile parentFolder = DocumentFile.fromTreeUri(context, folderUri);
-        if (parentFolder == null || !parentFolder.isDirectory()) return;
-
-        Uri dbUri = Uri.parse(MainActivity.selectedDB);
-        DocumentFile dbFile = DocumentFile.fromSingleUri(context, dbUri);
-        if (dbFile == null || !dbFile.exists()) return;
-
-
-        // Initialize player
         player.stop();
         player.clearMediaItems();
 
+        if (cleanupListener != null) {
+            player.removeListener(cleanupListener);
+        }
 
-        // Match and collect playable media items
-        List<MediaItem> mediaItems = new ArrayList<>();
-        for (SoundPath sound : paths) {
-            String targetName = sound.getPath().toLowerCase();
-            DocumentFile audioFile = audios.get(targetName);
+        for (String path : localPaths) {
+            player.addMediaItem(MediaItem.fromUri(Uri.fromFile(new File(path))));
+        }
 
-            if (audioFile != null && audioFile.isFile()) {
-                Uri fileUri = audioFile.getUri();
-                mediaItems.add(MediaItem.fromUri(fileUri));
+        cleanupListener = new Player.Listener() {
+            @Override
+            public void onPlaybackStateChanged(int playbackState) {
+                if (playbackState == Player.STATE_ENDED || playbackState == Player.STATE_IDLE) {
+                    for (String path : localPaths) {
+                        File cacheFile = new File(path);
+                        if (cacheFile.exists()) {
+                            cacheFile.delete();
+                        }
+                    }
+                }
             }
-        }
-
-        for (MediaItem item : mediaItems) {
-            player.addMediaItem(item);
-        }
+        };
+        player.addListener(cleanupListener);
 
         player.prepare();
         player.play();
     }
-
 
     public static void stop() {
         player.stop();
