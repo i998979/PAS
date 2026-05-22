@@ -1,5 +1,6 @@
 package to.epac.factorycraft.pas;
 
+import android.content.SharedPreferences;
 import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.media.audiofx.LoudnessEnhancer;
@@ -31,6 +32,8 @@ import androidx.media3.common.util.UnstableApi;
 import androidx.media3.exoplayer.ExoPlayer;
 
 import com.dropbox.core.DbxRequestConfig;
+import com.dropbox.core.android.Auth;
+import com.dropbox.core.oauth.DbxCredential;
 import com.dropbox.core.v2.DbxClientV2;
 import com.dropbox.core.v2.files.FileMetadata;
 import com.dropbox.core.v2.files.FolderMetadata;
@@ -53,6 +56,10 @@ import to.epac.factorycraft.pas.components.Content;
 public class MainActivity extends AppCompatActivity {
     public static DbxClientV2 dbxClient;
 
+    // Prevent scanning the folders every time the screen is locked/unlocked
+    private boolean isConnectedAndScanned = false;
+    private AlertDialog connectDialog;
+
     // Raw txt file's text
     public static ArrayList<String> data = new ArrayList<>();
     // All categories
@@ -67,7 +74,6 @@ public class MainActivity extends AppCompatActivity {
 
     public static ExoPlayer player;
     public LoudnessEnhancer enhancer;
-
 
     public GridLayout buttonLayout;
 
@@ -110,89 +116,6 @@ public class MainActivity extends AppCompatActivity {
         stop = findViewById(R.id.stop);
 
         panel = findViewById(R.id.panel);
-
-        new AlertDialog.Builder(this)
-                .setTitle("Connect to Dropbox")
-                .setMessage("Fetch .txt files from Dropbox recursively?")
-                .setPositiveButton("Connect", (dialog, which) -> {
-                    Toast.makeText(this, "Scanning Dropbox folders...", Toast.LENGTH_SHORT).show();
-                    new Thread(() -> {
-                        try {
-                            DbxRequestConfig config = DbxRequestConfig.newBuilder("dropbox/pas").build();
-                            dbxClient = new DbxClientV2(config, BuildConfig.DROPBOX_ACCESS_TOKEN);
-
-                            ArrayList<String> txtFiles = new ArrayList<>();
-
-                            Queue<String> folderQueue = new LinkedList<>();
-                            folderQueue.add("");
-
-                            while (!folderQueue.isEmpty()) {
-                                String currentFolder = folderQueue.poll();
-                                ListFolderResult result = dbxClient.files().listFolder(currentFolder);
-
-                                for (Metadata metadata : result.getEntries()) {
-                                    if (metadata instanceof FolderMetadata) {
-                                        folderQueue.add(metadata.getPathLower());
-                                    } else if (metadata instanceof FileMetadata) {
-                                        if (metadata.getName().toLowerCase().endsWith(".txt")) {
-                                            txtFiles.add(metadata.getPathDisplay());
-                                        }
-                                    }
-                                }
-                            }
-
-                            runOnUiThread(() -> {
-                                if (txtFiles.isEmpty()) {
-                                    Toast.makeText(this, "No .txt file found in any folder", Toast.LENGTH_SHORT).show();
-                                    return;
-                                }
-
-                                String[] items = txtFiles.toArray(new String[0]);
-                                new AlertDialog.Builder(MainActivity.this)
-                                        .setTitle("Select Database (.txt)")
-                                        .setItems(items, (d, w) -> {
-                                            String selectedPath = items[w];
-
-                                            int lastSlash = selectedPath.lastIndexOf("/");
-                                            selectedDbxFolder = lastSlash > 0 ? selectedPath.substring(0, lastSlash) : "";
-
-                                            new Thread(() -> {
-                                                try {
-                                                    InputStream in = dbxClient.files().download(selectedPath).getInputStream();
-                                                    BufferedReader reader = new BufferedReader(new InputStreamReader(in));
-                                                    String line;
-                                                    data.clear();
-                                                    categories.clear();
-                                                    components.clear();
-
-                                                    while ((line = reader.readLine()) != null) {
-                                                        data.add(line);
-                                                    }
-                                                    reader.close();
-                                                    in.close();
-
-                                                    runOnUiThread(() -> {
-                                                        categorize();
-                                                        applyCategoryToButton();
-                                                        updateMessageList();
-                                                        Toast.makeText(MainActivity.this, "Database Loaded from: " + selectedPath, Toast.LENGTH_LONG).show();
-                                                    });
-                                                } catch (Exception e) {
-                                                    e.printStackTrace();
-                                                    runOnUiThread(() -> Toast.makeText(MainActivity.this, "Error reading file", Toast.LENGTH_SHORT).show());
-                                                }
-                                            }).start();
-                                        })
-                                        .show();
-                            });
-                        } catch (Exception e) {
-                            e.printStackTrace();
-                            runOnUiThread(() -> Toast.makeText(this, "Dropbox scan failed", Toast.LENGTH_SHORT).show());
-                        }
-                    }).start();
-                })
-                .show();
-
 
         messageList.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
             @Override
@@ -245,7 +168,6 @@ public class MainActivity extends AppCompatActivity {
 
                         components.add(new Component(fullId, varSpinner));
                         panel.addView(varSpinner);
-
                     }
                 }
             }
@@ -413,7 +335,6 @@ public class MainActivity extends AppCompatActivity {
                             }
                         }
 
-                        // 3. 下載到內部快取
                         if (actualDbxPath != null) {
                             File cacheFile = new File(getCacheDir(), actualCloudFileName);
                             try (FileOutputStream out = new FileOutputStream(cacheFile)) {
@@ -423,7 +344,7 @@ public class MainActivity extends AppCompatActivity {
                                 e.printStackTrace();
                             }
                         } else {
-                            Log.e("PAS_DEBUG", "音檔未包含在該目錄下: " + targetBaseName);
+                            Log.e("PAS_DEBUG", "Track not found: " + targetBaseName);
                         }
                     }
                 } catch (Exception e) {
@@ -442,6 +363,164 @@ public class MainActivity extends AppCompatActivity {
         });
 
         stop.setOnClickListener(v -> PaPlayer.stop());
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+
+        String appKey = BuildConfig.DROPBOX_APP_KEY;
+
+        SharedPreferences prefs = getSharedPreferences("dropbox-prefs", MODE_PRIVATE);
+        String savedAccessToken = prefs.getString("access-token", null);
+        String savedRefreshToken = prefs.getString("refresh-token", null);
+        long expiresAt = prefs.getLong("expires-at", -1);
+
+        // 2. Fetch returned credentials from Auth flow
+        DbxCredential credential = null;
+        String legacyToken = null;
+        try {
+            credential = Auth.getDbxCredential(); // Modern short-lived token
+            Log.d("tagg", credential.toString());
+        } catch (Exception e) {
+            e.printStackTrace();
+        }
+
+        if (credential == null) {
+            legacyToken = Auth.getOAuth2Token(); // Fallback for older configurations
+        }
+
+        if (credential != null) {
+            // Save newly fetched short-lived token
+            prefs.edit()
+                    .putString("access-token", credential.getAccessToken())
+                    .putString("refresh-token", credential.getRefreshToken())
+                    .putLong("expires-at", credential.getExpiresAt() != null ? credential.getExpiresAt() : -1)
+                    .apply();
+            initDropboxClient(credential);
+
+        } else if (legacyToken != null) {
+            // Save newly fetched long-lived token
+            prefs.edit().putString("access-token", legacyToken).apply();
+            initDropboxClient(new DbxCredential(legacyToken, null, null, appKey));
+
+        } else if (savedAccessToken != null) {
+            // Re-use saved token from previous sessions
+            DbxCredential cred;
+            if (savedRefreshToken != null) {
+                cred = new DbxCredential(savedAccessToken, expiresAt == -1 ? null : expiresAt, savedRefreshToken, appKey);
+            } else {
+                cred = new DbxCredential(savedAccessToken, null, null, appKey);
+            }
+            initDropboxClient(cred);
+
+        } else {
+            // Ask user to connect (Only if completely unauthorized)
+            if (connectDialog == null || !connectDialog.isShowing()) {
+                connectDialog = new AlertDialog.Builder(this)
+                        .setTitle("Connect to Dropbox")
+                        .setMessage("Authorization required to fetch database (.txt) files.")
+                        .setPositiveButton("Connect", (dialog, which) -> {
+                            // 3. Start PKCE flow which correctly supports Modern Short-Lived tokens
+                            DbxRequestConfig config = DbxRequestConfig.newBuilder("dropbox/pas").build();
+                            Auth.startOAuth2PKCE(MainActivity.this, appKey, config);
+                        })
+                        .setCancelable(false)
+                        .show();
+            }
+        }
+    }
+
+    private void initDropboxClient(DbxCredential credential) {
+        if (dbxClient == null) {
+            DbxRequestConfig config = DbxRequestConfig.newBuilder("dropbox/pas").build();
+            dbxClient = new DbxClientV2(config, credential);
+        }
+
+        // Make sure we ONLY scan once, preventing overlapping/resetting the app UI
+        if (!isConnectedAndScanned) {
+            isConnectedAndScanned = true;
+            scanDropboxFolders();
+        }
+    }
+
+    private void scanDropboxFolders() {
+        Toast.makeText(this, "Scanning Dropbox folders...", Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                ArrayList<String> txtFiles = new ArrayList<>();
+
+                Queue<String> folderQueue = new LinkedList<>();
+                folderQueue.add("");
+
+                while (!folderQueue.isEmpty()) {
+                    String currentFolder = folderQueue.poll();
+                    ListFolderResult result = dbxClient.files().listFolder(currentFolder);
+
+                    for (Metadata metadata : result.getEntries()) {
+                        if (metadata instanceof FolderMetadata) {
+                            folderQueue.add(metadata.getPathLower());
+                        } else if (metadata instanceof FileMetadata) {
+                            if (metadata.getName().toLowerCase().endsWith(".txt")) {
+                                txtFiles.add(metadata.getPathDisplay());
+                            }
+                        }
+                    }
+                }
+
+                runOnUiThread(() -> {
+                    if (txtFiles.isEmpty()) {
+                        Toast.makeText(this, "No .txt file found in any folder", Toast.LENGTH_SHORT).show();
+                        return;
+                    }
+
+                    String[] items = txtFiles.toArray(new String[0]);
+                    new AlertDialog.Builder(MainActivity.this)
+                            .setTitle("Select Database (.txt)")
+                            .setItems(items, (d, w) -> {
+                                String selectedPath = items[w];
+
+                                int lastSlash = selectedPath.lastIndexOf("/");
+                                selectedDbxFolder = lastSlash > 0 ? selectedPath.substring(0, lastSlash) : "";
+
+                                new Thread(() -> {
+                                    try {
+                                        InputStream in = dbxClient.files().download(selectedPath).getInputStream();
+                                        BufferedReader reader = new BufferedReader(new InputStreamReader(in));
+                                        String line;
+                                        data.clear();
+                                        categories.clear();
+                                        components.clear();
+
+                                        while ((line = reader.readLine()) != null) {
+                                            data.add(line);
+                                        }
+                                        reader.close();
+                                        in.close();
+
+                                        runOnUiThread(() -> {
+                                            categorize();
+                                            applyCategoryToButton();
+                                            updateMessageList();
+                                            Toast.makeText(MainActivity.this, "Database Loaded from: " + selectedPath, Toast.LENGTH_LONG).show();
+                                        });
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                        runOnUiThread(() -> Toast.makeText(MainActivity.this, "Error reading file", Toast.LENGTH_SHORT).show());
+                                    }
+                                }).start();
+                            })
+                            .setCancelable(false)
+                            .show();
+                });
+            } catch (Exception e) {
+                e.printStackTrace();
+                runOnUiThread(() -> {
+                    Toast.makeText(this, "Dropbox scan failed. Try restarting app.", Toast.LENGTH_SHORT).show();
+                    // Optional: isConnectedAndScanned = false; // if you want them to be able to try scanning again
+                });
+            }
+        }).start();
     }
 
     private void categorize() {

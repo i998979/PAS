@@ -19,9 +19,8 @@ android {
         if (rootProject.file('local.properties').exists()) {
             properties.load(rootProject.file('local.properties').newDataInputStream())
         }
-        String dropboxToken = properties.getProperty('DROPBOX_ACCESS_TOKEN', '"DEFAULT_TOKEN"')
-
-        buildConfigField "String", "DROPBOX_ACCESS_TOKEN", "\"${dropboxToken}\""
+        String dropboxAppKey = properties.getProperty('DROPBOX_APP_KEY', '"DEFAULT_KEY"')
+        buildConfigField "String", "DROPBOX_APP_KEY", "\"${dropboxAppKey}\""
     }
 
     buildTypes {
@@ -45,6 +44,7 @@ dependencies {
     implementation libs.material
     implementation libs.media3.exoplayer
     implementation libs.dropbox.core.sdk
+    implementation libs.dropbox.android.sdk
     testImplementation libs.junit
     androidTestImplementation libs.ext.junit
     androidTestImplementation libs.espresso.core

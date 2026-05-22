@@ -9,6 +9,7 @@ material = "1.14.0"
 media3Exoplayer = "1.10.1"
 
 [libraries]
+dropbox-android-sdk = { module = "com.dropbox.core:dropbox-android-sdk", version.ref = "dropboxCoreSdk" }
 dropbox-core-sdk = { module = "com.dropbox.core:dropbox-core-sdk", version.ref = "dropboxCoreSdk" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
